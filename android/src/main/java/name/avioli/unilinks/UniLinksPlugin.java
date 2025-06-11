@@ -13,14 +13,11 @@ import io.flutter.plugin.common.BinaryMessenger;
 import io.flutter.plugin.common.EventChannel;
 import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
-import io.flutter.plugin.common.PluginRegistry;
 
-/** UniLinksPlugin */
 public class UniLinksPlugin implements FlutterPlugin, 
         MethodChannel.MethodCallHandler, 
         EventChannel.StreamHandler, 
-        ActivityAware, 
-        PluginRegistry.NewIntentListener {
+        ActivityAware {
 
     private static final String MESSAGES_CHANNEL = "uni_links/messages";
     private static final String EVENTS_CHANNEL = "uni_links/events";
@@ -98,22 +95,6 @@ public class UniLinksPlugin implements FlutterPlugin,
         }
     }
 
-    /** Plugin registration for compatibility with apps using the V1 embedding. */
-    @SuppressWarnings("deprecation")
-    public static void registerWith(@NonNull PluginRegistry.Registrar registrar) {
-        if (registrar.activity() == null) {
-            // If activity is null, app is running in background
-            return;
-        }
-
-        final UniLinksPlugin instance = new UniLinksPlugin();
-        instance.context = registrar.context();
-        instance.setupChannels(registrar.messenger());
-
-        instance.handleIntent(registrar.context(), registrar.activity().getIntent());
-        registrar.addNewIntentListener(instance);
-    }
-
     @Override
     public void onListen(Object o, EventChannel.EventSink eventSink) {
         changeReceiver = createChangeReceiver(eventSink);
@@ -136,15 +117,9 @@ public class UniLinksPlugin implements FlutterPlugin,
     }
 
     @Override
-    public boolean onNewIntent(Intent intent) {
-        handleIntent(context, intent);
-        return false;
-    }
-
-    @Override
     public void onAttachedToActivity(@NonNull ActivityPluginBinding binding) {
         this.activityBinding = binding;
-        binding.addOnNewIntentListener(this);
+        binding.addOnNewIntentListener(this::onNewIntent);
         handleIntent(context, binding.getActivity().getIntent());
     }
 
@@ -161,8 +136,13 @@ public class UniLinksPlugin implements FlutterPlugin,
     @Override
     public void onDetachedFromActivity() {
         if (activityBinding != null) {
-            activityBinding.removeOnNewIntentListener(this);
+            activityBinding.removeOnNewIntentListener(this::onNewIntent);
             activityBinding = null;
         }
+    }
+
+    private boolean onNewIntent(Intent intent) {
+        handleIntent(context, intent);
+        return false;
     }
 }
