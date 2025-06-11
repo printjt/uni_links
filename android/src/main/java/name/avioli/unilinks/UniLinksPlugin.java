@@ -13,29 +13,29 @@ import io.flutter.plugin.common.BinaryMessenger;
 import io.flutter.plugin.common.EventChannel;
 import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
+import io.flutter.plugin.common.PluginRegistry;
 
-public class UniLinksPlugin implements
-        FlutterPlugin,
-        MethodChannel.MethodCallHandler,
-        EventChannel.StreamHandler,
-        ActivityAware,
-        io.flutter.embedding.engine.plugins.activity.NewIntentListener {
+/** UniLinksPlugin */
+public class UniLinksPlugin implements FlutterPlugin, 
+        MethodChannel.MethodCallHandler, 
+        EventChannel.StreamHandler, 
+        ActivityAware, 
+        PluginRegistry.NewIntentListener {
 
     private static final String MESSAGES_CHANNEL = "uni_links/messages";
     private static final String EVENTS_CHANNEL = "uni_links/events";
 
     private BroadcastReceiver changeReceiver;
+    private MethodChannel methodChannel;
+    private EventChannel eventChannel;
+
     private String initialLink;
     private String latestLink;
     private Context context;
     private boolean initialIntent = true;
-
-    private MethodChannel methodChannel;
-    private EventChannel eventChannel;
+    private ActivityPluginBinding activityBinding;
 
     private void handleIntent(Context context, Intent intent) {
-        if (intent == null) return;
-
         String action = intent.getAction();
         String dataString = intent.getDataString();
 
@@ -45,7 +45,9 @@ public class UniLinksPlugin implements
                 initialIntent = false;
             }
             latestLink = dataString;
-            if (changeReceiver != null) changeReceiver.onReceive(context, intent);
+            if (changeReceiver != null) {
+                changeReceiver.onReceive(context, intent);
+            }
         }
     }
 
@@ -55,6 +57,7 @@ public class UniLinksPlugin implements
             @Override
             public void onReceive(Context context, Intent intent) {
                 String dataString = intent.getDataString();
+
                 if (dataString == null) {
                     events.error("UNAVAILABLE", "Link unavailable", null);
                 } else {
@@ -62,6 +65,12 @@ public class UniLinksPlugin implements
                 }
             }
         };
+    }
+
+    @Override
+    public void onAttachedToEngine(@NonNull FlutterPluginBinding flutterPluginBinding) {
+        this.context = flutterPluginBinding.getApplicationContext();
+        setupChannels(flutterPluginBinding.getBinaryMessenger());
     }
 
     private void setupChannels(BinaryMessenger messenger) {
@@ -73,51 +82,75 @@ public class UniLinksPlugin implements
     }
 
     @Override
-    public void onAttachedToEngine(@NonNull FlutterPluginBinding binding) {
-        this.context = binding.getApplicationContext();
-        setupChannels(binding.getBinaryMessenger());
-    }
-
-    @Override
     public void onDetachedFromEngine(@NonNull FlutterPluginBinding binding) {
-        if (methodChannel != null) methodChannel.setMethodCallHandler(null);
-        if (eventChannel != null) eventChannel.setStreamHandler(null);
+        tearDownChannels();
+        context = null;
     }
 
-    @Override
-    public void onMethodCall(@NonNull MethodCall call, @NonNull MethodChannel.Result result) {
-        switch (call.method) {
-            case "getInitialLink":
-                result.success(initialLink);
-                break;
-            case "getLatestLink":
-                result.success(latestLink);
-                break;
-            default:
-                result.notImplemented();
-                break;
+    private void tearDownChannels() {
+        if (methodChannel != null) {
+            methodChannel.setMethodCallHandler(null);
+            methodChannel = null;
+        }
+        if (eventChannel != null) {
+            eventChannel.setStreamHandler(null);
+            eventChannel = null;
         }
     }
 
+    /** Plugin registration for compatibility with apps using the V1 embedding. */
+    @SuppressWarnings("deprecation")
+    public static void registerWith(@NonNull PluginRegistry.Registrar registrar) {
+        if (registrar.activity() == null) {
+            // If activity is null, app is running in background
+            return;
+        }
+
+        final UniLinksPlugin instance = new UniLinksPlugin();
+        instance.context = registrar.context();
+        instance.setupChannels(registrar.messenger());
+
+        instance.handleIntent(registrar.context(), registrar.activity().getIntent());
+        registrar.addNewIntentListener(instance);
+    }
+
     @Override
-    public void onListen(Object args, EventChannel.EventSink eventSink) {
+    public void onListen(Object o, EventChannel.EventSink eventSink) {
         changeReceiver = createChangeReceiver(eventSink);
     }
 
     @Override
-    public void onCancel(Object args) {
+    public void onCancel(Object o) {
         changeReceiver = null;
     }
 
     @Override
+    public void onMethodCall(@NonNull MethodCall call, @NonNull MethodChannel.Result result) {
+        if (call.method.equals("getInitialLink")) {
+            result.success(initialLink);
+        } else if (call.method.equals("getLatestLink")) {
+            result.success(latestLink);
+        } else {
+            result.notImplemented();
+        }
+    }
+
+    @Override
+    public boolean onNewIntent(Intent intent) {
+        handleIntent(context, intent);
+        return false;
+    }
+
+    @Override
     public void onAttachedToActivity(@NonNull ActivityPluginBinding binding) {
+        this.activityBinding = binding;
         binding.addOnNewIntentListener(this);
         handleIntent(context, binding.getActivity().getIntent());
     }
 
     @Override
-    public void onDetachedFromActivity() {
-        // no-op
+    public void onDetachedFromActivityForConfigChanges() {
+        onDetachedFromActivity();
     }
 
     @Override
@@ -126,13 +159,10 @@ public class UniLinksPlugin implements
     }
 
     @Override
-    public void onDetachedFromActivityForConfigChanges() {
-        // no-op
-    }
-
-    @Override
-    public boolean onNewIntent(Intent intent) {
-        handleIntent(context, intent);
-        return false;
+    public void onDetachedFromActivity() {
+        if (activityBinding != null) {
+            activityBinding.removeOnNewIntentListener(this);
+            activityBinding = null;
+        }
     }
 }
